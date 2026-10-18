@@ -27,10 +27,12 @@ deliberatamente rimandato ed è elencato in fondo.
 - **Più progetti insieme** – *Apri cartella…* aggiunge un progetto invece di
   sostituire quello in corso; in cima all'albero compaiono le linguette dei
   progetti aperti e un clic su una di esse passa a quel progetto. Ogni progetto
-  ha **le sue tab** (i file aperti di quel progetto, con la tab in primo piano
-  che si ricorda), il suo albero (cartelle espanse e selezione si ritrovano
-  tornando), la sua ricerca, la sua build e il suo language server. Aprire un
-  file di un altro progetto ci porta automaticamente.
+  può avere un **colore personalizzato** (selezionabile dal campione accanto
+  alla linguetta, salvato nella sessione), ha **le sue tab** (i file aperti di
+  quel progetto, con la tab in primo piano che si ricorda), il suo albero
+  (cartelle espanse e selezione si ritrovano tornando), la sua ricerca, la sua
+  build e il suo language server. Aprire un file di un altro progetto ci porta
+  automaticamente.
 - **Sessione** – uscendo, i progetti aperti con i loro file e i loro alberi
   restano scritti: al prossimo avvio si ritrova la stessa scrivania — cartelle
   aperte, voce selezionata e progetto attivo compresi.

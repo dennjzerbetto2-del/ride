@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use egui::{Context, ViewportCommand};
+use egui::{Color32, Context, ViewportCommand};
 use ride_core::build::BuildTool;
 use ride_core::editor::{self, Lines};
 use ride_core::search::SearchQuery;
@@ -54,6 +54,8 @@ pub struct RideApp {
     /// Alberi degli altri progetti aperti: cambiando progetto non si perdono le
     /// cartelle espanse né la selezione.
     trees: HashMap<PathBuf, TreeState>,
+    /// Colori scelti per i progetti aperti, associati alla loro radice.
+    pub(crate) project_colors: HashMap<PathBuf, Color32>,
     pub find: FindState,
     pub search: ProjectSearchState,
     pub dialogs: crate::state::DialogState,
@@ -96,6 +98,7 @@ impl RideApp {
             prefs: Prefs::default(),
             tree: TreeState::default(),
             trees: HashMap::new(),
+            project_colors: HashMap::new(),
             find: FindState::default(),
             search: ProjectSearchState::default(),
             dialogs: Default::default(),
@@ -196,6 +199,17 @@ impl RideApp {
         }
         let voci = session.len();
         let mancanti = session.restore(&mut self.workspace);
+        self.project_colors.clear();
+        for project in &session.projects {
+            if self.workspace.index_of_project(&project.root).is_some() {
+                if let Some([red, green, blue, alpha]) = project.color {
+                    self.project_colors.insert(
+                        project.root.clone(),
+                        Color32::from_rgba_unmultiplied(red, green, blue, alpha),
+                    );
+                }
+            }
+        }
         // Gli alberi si preparano prima di mostrarne uno: `sync_shown_project`
         // prende dal deposito quello del progetto attivo.
         self.restore_trees(&session);
@@ -334,6 +348,7 @@ impl RideApp {
         self.workspace.close_project_at(index);
         if let Some(root) = closed {
             self.trees.remove(&root);
+            self.project_colors.remove(&root);
         }
         // Il server era legato alla cartella chiusa: ripartirà sul progetto nuovo.
         self.lsp_tried = None;
@@ -394,6 +409,10 @@ impl RideApp {
     fn session(&self) -> Session {
         let mut session = self.workspace.session();
         for project in &mut session.projects {
+            project.color = self
+                .project_colors
+                .get(&project.root)
+                .map(|color| color.to_array());
             if let Some(tree) = self.tree_of(&project.root) {
                 project.expanded = tree.expanded_paths();
                 project.selected = tree.selected.clone();
@@ -2042,6 +2061,7 @@ mod tests {
             prefs: Prefs::default(),
             tree: TreeState::default(),
             trees: HashMap::new(),
+            project_colors: HashMap::new(),
             find: FindState::default(),
             search: ProjectSearchState::default(),
             dialogs: Default::default(),
@@ -2396,6 +2416,8 @@ mod tests {
         std::fs::write(b.join("b.rs"), "fn b() {}\n").unwrap();
 
         app.dispatch(Action::OpenFolder(a.clone()));
+        app.project_colors
+            .insert(canonical(&a), Color32::from_rgb(0x12, 0xab, 0xff));
         app.dispatch(Action::OpenPath(a.join("a.rs")));
         // Due tab in A, ma in primo piano resta `a.rs`.
         let primo = app.workspace.active_id().unwrap();
@@ -2406,6 +2428,8 @@ mod tests {
         app.tree.selected = Some(canonical(&a).join("src/lib.rs"));
 
         app.dispatch(Action::OpenFolder(b.clone()));
+        app.project_colors
+            .insert(canonical(&b), Color32::from_rgb(0xe0, 0x78, 0x55));
         app.dispatch(Action::OpenPath(b.join("b.rs")));
         espandi(&mut app.tree, "gui");
         let testo = app.session().encode();
@@ -2416,6 +2440,14 @@ mod tests {
         nuovo.restore_session_text(&testo);
 
         assert_eq!(nuovo.workspace.project_count(), 2);
+        assert_eq!(
+            nuovo.project_colors.get(&canonical(&a)),
+            Some(&Color32::from_rgb(0x12, 0xab, 0xff))
+        );
+        assert_eq!(
+            nuovo.project_colors.get(&canonical(&b)),
+            Some(&Color32::from_rgb(0xe0, 0x78, 0x55))
+        );
         // L'ultimo progetto attivo era B, ed è da B che si riparte.
         assert_eq!(nuovo.workspace.active_project_index(), Some(1));
         assert_eq!(nuovo.tree.root.as_ref().unwrap().path, canonical(&b));

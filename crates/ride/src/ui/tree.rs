@@ -85,18 +85,45 @@ pub fn panel(ui: &mut Ui, app: &mut RideApp) -> Vec<Action> {
 ///
 /// Un clic su una linguetta cambia progetto: l'albero sotto diventa quello di
 /// quella cartella. È il modo per tenere aperti più progetti insieme.
-fn header(ui: &mut Ui, app: &RideApp, actions: &mut Vec<Action>) {
+fn header(ui: &mut Ui, app: &mut RideApp, actions: &mut Vec<Action>) {
     let count = app.workspace.project_count();
+    let active_project = app.workspace.active_project_index();
+    let projects: Vec<_> = app
+        .workspace
+        .projects()
+        .map(|project| (project.name().to_string(), project.root().to_path_buf()))
+        .collect();
     ui.horizontal_wrapped(|ui| {
         if count == 0 {
             ui.label(RichText::new("Progetto").strong());
             return;
         }
-        for (index, project) in app.workspace.projects().enumerate() {
-            let active = app.workspace.active_project_index() == Some(index);
+        for (index, (name, root)) in projects.iter().enumerate() {
+            let active = active_project == Some(index);
+            let mut color = app
+                .project_colors
+                .get(root)
+                .copied()
+                .unwrap_or_else(|| Color32::from_rgb(0x7f, 0x9f, 0xc8));
+            let color_response = ui
+                .color_edit_button_srgba(&mut color)
+                .on_hover_text("Scegli il colore del progetto");
+            if color_response.changed() {
+                app.project_colors.insert(root.clone(), color);
+            }
+            color_response.context_menu(|ui| {
+                if ui.button("Ripristina colore predefinito").clicked() {
+                    app.project_colors.remove(root);
+                    ui.close();
+                }
+            });
+            let label = match app.project_colors.get(root) {
+                Some(color) => RichText::new(name).color(*color),
+                None => RichText::new(name),
+            };
             let response = ui
-                .selectable_label(active, project.name())
-                .on_hover_text(project.root().display().to_string());
+                .selectable_label(active, label)
+                .on_hover_text(root.display().to_string());
             if response.clicked() && !active {
                 actions.push(Action::SwitchProject(index));
             }

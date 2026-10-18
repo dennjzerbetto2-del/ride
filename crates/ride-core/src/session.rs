@@ -14,6 +14,8 @@ use crate::workspace::Workspace;
 pub struct ProjectSession {
     /// Cartella radice del progetto.
     pub root: PathBuf,
+    /// Colore personalizzato del progetto (RGBA), se impostato.
+    pub color: Option<[u8; 4]>,
     /// File aperti, nell'ordine delle tab.
     pub files: Vec<PathBuf>,
     /// Tab in primo piano, se c'era.
@@ -40,11 +42,12 @@ pub struct Session {
     pub loose_active: Option<PathBuf>,
 }
 
-/// Etichette delle righe del formato: una lettera, poi il percorso.
+/// Etichette delle righe del formato: una lettera, poi il percorso (o il colore RGBA per `C`).
 ///
 /// `P` progetto, `F` file aperto, `A` tab in primo piano, `E` cartella espansa,
 /// `V` voce selezionata; poi le righe di chi non ha un progetto: `L` file,
-/// `S` tab in primo piano. `T` chiude: il progetto attivo.
+/// `S` tab in primo piano. `C` salva il colore del progetto e `T` il progetto
+/// attivo.
 const PROGETTO: char = 'P';
 const FILE: char = 'F';
 const ATTIVO: char = 'A';
@@ -53,6 +56,7 @@ const SELEZIONATO: char = 'V';
 const SCIOLTO: char = 'L';
 const SCIOLTO_ATTIVO: char = 'S';
 const PROGETTO_ATTIVO: char = 'T';
+const COLORE_PROGETTO: char = 'C';
 
 impl Session {
     /// Una sessione vuota: niente da riaprire.
@@ -83,6 +87,11 @@ impl Session {
         }
         for project in &self.projects {
             lines.push(riga(PROGETTO, &project.root));
+            if let Some([red, green, blue, alpha]) = project.color {
+                lines.push(format!(
+                    "{COLORE_PROGETTO}{red:02x}{green:02x}{blue:02x}{alpha:02x}"
+                ));
+            }
             for file in &project.files {
                 lines.push(riga(FILE, file));
             }
@@ -117,11 +126,19 @@ impl Session {
             match tag {
                 PROGETTO => session.projects.push(ProjectSession {
                     root: path,
+                    color: None,
                     files: Vec::new(),
                     active: None,
                     expanded: Vec::new(),
                     selected: None,
                 }),
+                COLORE_PROGETTO => {
+                    if let Some(project) = session.projects.last_mut() {
+                        if let Some(color) = decode_color(chars.as_str()) {
+                            project.color = Some(color);
+                        }
+                    }
+                }
                 FILE => {
                     if let Some(project) = session.projects.last_mut() {
                         project.files.push(path);
@@ -220,6 +237,7 @@ impl Workspace {
                 let (files, active) = self.project_files(index);
                 ProjectSession {
                     root: project.root().to_path_buf(),
+                    color: None,
                     files,
                     active,
                     expanded: Vec::new(),
@@ -276,6 +294,17 @@ fn leggi(text: &str) -> PathBuf {
     PathBuf::from(out)
 }
 
+fn decode_color(value: &str) -> Option<[u8; 4]> {
+    if value.len() != 8 || !value.is_ascii() {
+        return None;
+    }
+    let mut color = [0; 4];
+    for (index, channel) in color.iter_mut().enumerate() {
+        *channel = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).ok()?;
+    }
+    Some(color)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,6 +339,7 @@ mod tests {
             projects: vec![
                 ProjectSession {
                     root: PathBuf::from("/p/a"),
+                    color: None,
                     files: vec![PathBuf::from("/p/a/x.rs"), PathBuf::from("/p/a/y.rs")],
                     active: Some(PathBuf::from("/p/a/y.rs")),
                     expanded: vec![PathBuf::from("/p/a"), PathBuf::from("/p/a/src")],
@@ -317,6 +347,7 @@ mod tests {
                 },
                 ProjectSession {
                     root: PathBuf::from("/p/b"),
+                    color: None,
                     files: Vec::new(),
                     active: None,
                     expanded: Vec::new(),
@@ -338,12 +369,34 @@ mod tests {
     }
 
     #[test]
+    fn il_colore_del_progetto_si_salva_e_si_rilegge() {
+        let session = Session {
+            projects: vec![ProjectSession {
+                root: PathBuf::from("/p/colorato"),
+                color: Some([0x12, 0xab, 0xff, 0xff]),
+                files: Vec::new(),
+                active: None,
+                expanded: Vec::new(),
+                selected: None,
+            }],
+            ..Session::default()
+        };
+        assert_eq!(Session::decode(&session.encode()), session);
+        assert_eq!(
+            Session::decode("P/p\nC12abffff").projects[0].color,
+            Some([0x12, 0xab, 0xff, 0xff])
+        );
+        assert_eq!(Session::decode("P/p\nCnotacol").projects[0].color, None);
+    }
+
+    #[test]
     fn percorsi_bislacchi_non_rompono_la_sessione() {
         // Un a capo o una barra rovesciata in un nome di file sono legali su
         // Linux: non devono spezzare le righe del formato.
         let session = Session {
             projects: vec![ProjectSession {
                 root: PathBuf::from("/p/a\nb"),
+                color: None,
                 files: vec![PathBuf::from("/p/a\\c.txt"), PathBuf::from("/p/d\re")],
                 active: Some(PathBuf::from("/p/a\\c.txt")),
                 expanded: vec![PathBuf::from("/p/a\nb/src")],
@@ -363,6 +416,7 @@ mod tests {
             session.projects,
             vec![ProjectSession {
                 root: PathBuf::from("/p"),
+                color: None,
                 files: vec![PathBuf::from("/p/x")],
                 active: None,
                 expanded: Vec::new(),
