@@ -1,0 +1,36 @@
+[package]
+name = "ride"
+description = "Editor di codice multi-file con gestione di progetti."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ride"
+path = "src/main.rs"
+
+[features]
+default = ["native-dialogs"]
+# Finestre di dialogo native (GTK/portale XDG). Se disattivata, l'editor usa le
+# finestre di dialogo interne (percorso scritto a mano), senza dipendenze di sistema.
+native-dialogs = ["dep:rfd"]
+
+[dependencies]
+ride-core.workspace = true
+
+egui = "0.37"
+eframe = { version = "0.37", features = ["persistence"] }
+
+# Client LSP: il protocollo JSON-RPC parla JSON, quindi serve un parser/serializzatore.
+serde_json = "1"
+
+# Evidenziazione della sintassi. `default-features = false` + `regex-fancy`
+# evita la dipendenza da Oniguruma (C): resta tutto Rust compilabile ovunque.
+syntect = { version = "5.3", default-features = false, features = [
+    "default-syntaxes",
+    "default-themes",
+    "regex-fancy",
+] }
+
+rfd = { version = "0.17", optional = true }

@@ -1,0 +1,14 @@
+[package]
+name = "ride-core"
+description = "Logica pura dell'editor Ride: documenti, progetto, ricerca, formattazione."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# Scansione delle directory che rispetta .gitignore / .ignore, come fanno i
+# tool di sviluppo (è lo stesso crate usato da ripgrep).
+ignore = "0.4"
+# Ricerca nei file del progetto.
+regex = "1"
