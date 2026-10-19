@@ -107,6 +107,15 @@ impl Prefs {
         }
     }
 
+    /// Colore della `M` che segna l'inizio di un metodo o di una funzione.
+    pub fn symbol_marker(&self) -> Color32 {
+        if self.dark {
+            Color32::from_rgb(0x8f, 0xc0, 0x7a)
+        } else {
+            Color32::from_rgb(0x2f, 0x7d, 0x4f)
+        }
+    }
+
     /// Applica le preferenze allo stile di egui, se serve.
     ///
     /// `egui` 0.37 tiene *due* stili, uno per tema: qui li aggiorniamo entrambi e

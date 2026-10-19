@@ -18,6 +18,7 @@
 //! * [`search`] – ricerca testuale/regolare dentro il progetto;
 //! * [`editor`] – operazioni di editing (indenta, commenta, duplica righe, …);
 //! * [`folds`] – i blocchi `{ … }` che si possono piegare nell'editor;
+//! * [`symbols`] – funzioni e metodi riconosciuti nel testo (la `M` del canale);
 //! * [`syntax`] – linguaggio dedotto dall'estensione e convenzioni di stile;
 //! * [`format`] – invocazione di formatter esterni (rustfmt, prettier, …);
 //! * [`build`] – riconoscimento e invocazione del sistema di build (Maven, Gradle).
@@ -30,6 +31,7 @@ pub mod format;
 pub mod project;
 pub mod search;
 pub mod session;
+pub mod symbols;
 pub mod syntax;
 pub mod workspace;
 

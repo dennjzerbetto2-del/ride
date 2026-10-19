@@ -24,6 +24,7 @@ use egui::{
 };
 use ride_core::editor::{AutoPair, EnterEdit, Lines};
 use ride_core::folds::FoldBlock;
+use ride_core::symbols::FunctionSymbol;
 use ride_core::{Cursor, Document, DocumentId, Language};
 
 use crate::action::Action;
@@ -39,6 +40,8 @@ const GUTTER_PAD: f32 = 8.0;
 const GUTTER_GAP: f32 = 10.0;
 /// Larghezza della colonna dei marcatori di piega (a destra dei numeri).
 const FOLD_MARKER_WIDTH: f32 = 14.0;
+/// Larghezza della colonna con la `M` dei metodi (a sinistra dei numeri).
+const SYMBOL_MARKER_WIDTH: f32 = 16.0;
 /// Oltre questo numero di righe i numeri non vengono disegnati.
 const MAX_GUTTER_LINES: usize = 200_000;
 
@@ -331,6 +334,7 @@ pub fn show(
     let lines = doc.lines();
     let line_count = lines.count();
     let digits = line_count.to_string().len().max(2);
+    let language = doc.language();
 
     // Piegatura dei blocchi `{ … }`. Si clicca nel canale dei numeri, quindi
     // senza canale non ha senso calcolarla.
@@ -349,13 +353,29 @@ pub fn show(
     ride_core::folds::merge_ranges(&mut hidden);
     let visible_lines = line_count - hidden.iter().map(|range| range.len()).sum::<usize>();
 
+    // Funzioni e metodi: la `M` nel canale e il nome nel popup. Come la
+    // piegatura, ha senso solo se c'è il canale e il file non è enorme.
+    let symbols: Vec<FunctionSymbol> = if prefs.line_numbers
+        && line_count <= MAX_GUTTER_LINES
+        && language.is_code()
+    {
+        ride_core::symbols::function_symbols(doc.text(), language)
+    } else {
+        Vec::new()
+    };
+    let symbol_width = if symbols.is_empty() {
+        0.0
+    } else {
+        SYMBOL_MARKER_WIDTH
+    };
+
     let gutter_width = if prefs.line_numbers && line_count <= MAX_GUTTER_LINES {
         let sample = ui.fonts_mut(|fonts| fonts.layout_no_wrap(
             "0".repeat(digits),
             font.clone(),
             Color32::WHITE,
         ));
-        sample.size().x + GUTTER_PAD * 2.0 + GUTTER_GAP + FOLD_MARKER_WIDTH
+        sample.size().x + GUTTER_PAD * 2.0 + GUTTER_GAP + FOLD_MARKER_WIDTH + symbol_width
     } else {
         0.0
     };
@@ -401,7 +421,6 @@ pub fn show(
     } else {
         Some(find.current)
     };
-    let language = doc.language();
     let highlight = prefs.highlight;
     let editor_bg = prefs.editor_bg();
 
@@ -545,6 +564,7 @@ pub fn show(
             &output.galley,
             &blocks,
             &folds,
+            &symbols,
         );
         if let Some(open_byte) = clicked {
             doc.toggle_fold(open_byte);
@@ -723,8 +743,8 @@ fn draw_diagnostics(
     }
 }
 
-/// Disegna il canale dei numeri di riga (fermo a sinistra) e i marcatori di
-/// piega dei blocchi `{ … }`.
+/// Disegna il canale dei numeri di riga (fermo a sinistra), i marcatori di piega
+/// dei blocchi `{ … }` e la `M` che segna l'inizio di un metodo o di una funzione.
 ///
 /// Restituisce l'offset della `{` del blocco su cui si è cliccato, se è stato
 /// cliccato un marcatore: chi chiama decide se piegarlo o riaprirlo.
@@ -742,6 +762,7 @@ fn draw_gutter(
     galley: &Galley,
     blocks: &[FoldBlock],
     folds: &[usize],
+    symbols: &[FunctionSymbol],
 ) -> Option<usize> {
     if line_height <= 0.0 || gutter_width <= 0.0 || galley.rows.is_empty() {
         return None;
@@ -763,6 +784,9 @@ fn draw_gutter(
     let number_right = background.right() - GUTTER_PAD - FOLD_MARKER_WIDTH;
     let marker_x = background.right() - GUTTER_PAD - FOLD_MARKER_WIDTH * 0.5;
     let marker_left = background.right() - GUTTER_PAD - FOLD_MARKER_WIDTH;
+    // La `M` sta a sinistra dei numeri.
+    let symbol_center = background.left() + GUTTER_PAD + SYMBOL_MARKER_WIDTH * 0.5;
+    let symbol_right = background.left() + GUTTER_PAD + SYMBOL_MARKER_WIDTH;
 
     // Le righe dei blocchi piegati hanno altezza zero (vedi `highlight::compact`)
     // e si saltano: le posizioni verticali vengono dalla galley, così i numeri
@@ -815,6 +839,21 @@ fn draw_gutter(
             );
             markers.push((doc_line, open_byte));
         }
+
+        // La `M` all'inizio di un metodo o di una funzione. Il nome compare in
+        // un popup al passaggio del mouse (vedi sotto).
+        if symbols
+            .binary_search_by_key(&doc_line, |symbol| symbol.line)
+            .is_ok()
+        {
+            painter.text(
+                pos2(symbol_center, y + row_height * 0.5),
+                Align2::CENTER_CENTER,
+                "M",
+                font.clone(),
+                prefs.symbol_marker(),
+            );
+        }
     }
 
     // Il clic sui marcatori: l'intera striscia del canale è sensibile, ma si
@@ -835,6 +874,33 @@ fn draw_gutter(
                 }) {
                     return Some(open_byte);
                 }
+            }
+        }
+    }
+
+    // Il nome del metodo/funzione, quando il mouse è sulla `M`.
+    if let Some(pos) = response.hover_pos() {
+        if pos.x <= symbol_right {
+            let local = pos.y - text_top;
+            let hovered = galley
+                .rows
+                .iter()
+                .enumerate()
+                .find(|(_, placed)| {
+                    placed.row.size.y > 0.0
+                        && local >= placed.pos.y
+                        && local < placed.pos.y + placed.row.size.y
+                })
+                .and_then(|(doc_line, _)| {
+                    symbols
+                        .binary_search_by_key(&doc_line, |symbol| symbol.line)
+                        .ok()
+                        .map(|index| &symbols[index])
+                });
+            if let Some(symbol) = hovered {
+                response.clone().on_hover_ui_at_pointer(|ui| {
+                    ui.label(RichText::new(&symbol.name).strong());
+                });
             }
         }
     }

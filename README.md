@@ -44,7 +44,8 @@ deliberatamente rimandato ed è elencato in fondo.
   parentesi e graffe** e **apertura del blocco** con `Invio`, **evidenziazione
   della coppia di parentesi** sotto il cursore (in rosso se non è bilanciata),
   **piegatura dei blocchi `{ … }`** cliccando il marcatore `▾`/`▸` nel canale dei
-  numeri di riga, indentazione automatica dopo `Invio` e `Tab`,
+  numeri di riga, **`M` all'inizio di ogni metodo/funzione** (col nome in un
+  popup al passaggio del mouse), indentazione automatica dopo `Invio` e `Tab`,
   commenta/indenta/duplica/sposta/cancella righe.
 - **Trova e sostituisci** nel file (`Ctrl+F` / `Ctrl+H`) e **ricerca in tutti i
   file del progetto** (`Ctrl+Shift+F`, o dal menu *Visualizza*, su thread
@@ -143,6 +144,7 @@ crates/
 │   ├── search.rs     ricerca testuale/regolare nel progetto
 │   ├── editor.rs     operazioni per righe (indenta, commenta, duplica…) e parentesi
 │   ├── folds.rs      i blocchi `{ … }` che si possono piegare
+│   ├── symbols.rs    funzioni e metodi riconosciuti (la `M` del canale)
 │   ├── syntax.rs     linguaggio dedotto dall'estensione
 │   ├── format.rs     formatter esterni via stdin/stdout
 │   └── build.rs      riconosce e invoca Maven/Gradle
@@ -158,7 +160,7 @@ crates/
         ├── menu.rs   barra dei menu
         ├── tabs.rs   barra delle tab
         ├── tree.rs   albero del progetto
-        ├── editor.rs numeri di riga, testo, barra trova/sostituisci
+        ├── editor.rs numeri di riga, `M` dei metodi, testo, barra trova/sostituisci
         ├── search.rs pannello "cerca nel progetto"
         ├── status.rs barra di stato
         └── dialogs.rs finestre sovrapposte
@@ -303,6 +305,11 @@ Questo è uno **scheletro funzionante**, non un editor completo. In particolare:
   canale dei numeri di riga (con più di 200.000 righe, dove i numeri spariscono,
   non c'è piegatura) e si può disattivare da *Visualizza* (*Piega i blocchi
   dalle graffe*).
+- **`M` dei metodi**: anche il riconoscimento delle funzioni è per riga e per
+  lingua (`fn`, `def`, `func`, `function`, arrow function, dichiarazioni in
+  stile C, funzioni di shell), non un parser: una dichiarazione scritta in modo
+  insolito può sfuggire. La `M` compare nello stesso canale dei numeri e il nome
+  si legge nel popup al passaggio del mouse.
 - **Più progetti**: ogni progetto ha le sue tab, quindi non si possono vedere i
   file di due progetti nella stessa barra. Aprire una cartella porta con sé i
   documenti aperti quando non c'era ancora nessun progetto; chiudere un progetto
