@@ -111,12 +111,16 @@ fn header(ui: &mut Ui, app: &mut RideApp, actions: &mut Vec<Action>) {
             if color_response.changed() {
                 app.project_colors.insert(root.clone(), color);
             }
-            color_response.context_menu(|ui| {
-                if ui.button("Ripristina colore predefinito").clicked() {
-                    app.project_colors.remove(root);
-                    ui.close();
-                }
-            });
+            // Il popup del color picker usa già `response.id.with("popup")`:
+            // senza un ID dedicato il menu contestuale colliderebbe con esso.
+            egui::Popup::context_menu(&color_response)
+                .id(color_response.id.with("project-color-menu"))
+                .show(|ui| {
+                    if ui.button("Ripristina colore predefinito").clicked() {
+                        app.project_colors.remove(root);
+                        ui.close();
+                    }
+                });
             let label = match app.project_colors.get(root) {
                 Some(color) => RichText::new(name).color(*color),
                 None => RichText::new(name),
