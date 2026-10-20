@@ -1,0 +1,55 @@
+name: Rust
+
+on:
+  push:
+    tags:
+      - 'v*' # Si attiva quando fai un push di un tag tipo v1.0.0
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: ride
+            name: ride-linux-amd64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: ride.exe
+            name: ride-windows-amd64.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bin: ride
+            name: ride-macos-amd64
+    
+    steps:
+      - name: Checkout codice
+        uses: actions/checkout@v4
+
+      - name: Installa Toolchain Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Compila in Release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Rinomina binario
+        run: |
+          # Per Linux/macOS
+          mv target/${{ matrix.target }}/release/${{ matrix.bin }} ${{ matrix.name }}
+        shell: bash
+
+      - name: Carica su GitHub Releases
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ${{ matrix.name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
