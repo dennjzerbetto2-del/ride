@@ -74,6 +74,15 @@ deliberatamente rimandato ed è elencato in fondo.
   che il `pom.xml` dichiara (`spring-boot:run`, `dependency:tree`, …) con i loro
   goal; per tutto il resto c'è *Comando…*, che accetta qualunque goal con le sue
   opzioni (`dependency:tree -Dverbose`).
+- **Terminale integrato** – Ctrl+` apre in fondo alla finestra un pannello con
+  uno shell **vero** su un PTY (pseudoterminale): prompt, colori, programmi
+  interattivi e scorrimento della cronologia funzionano come in un terminale di
+  sistema. Il pannello è **agganciato** alla finestra (e ridimensionabile), ma
+  con **l'autoscomparsa** attiva — è il comportamento predefinito — si nasconde
+  da solo quando perde il fuoco e il puntatore non è più sopra di lui, lasciando
+  però vivo lo shell: `Ctrl+` (o l'indicatore nella barra di stato) lo riporta.
+  Dal menu *Visualizza* si può spegnere l'autoscomparsa; dall'intestazione del
+  pannello, riavviare lo shell nella cartella del progetto o nasconderlo a mano.
 - **Preferenze** persistenti tra le esecuzioni (tema, dimensione del font,
   pannelli, evidenziazione, LSP…).
 - **Trascina un file o una cartella** sulla finestra per aprirlo.
@@ -155,6 +164,7 @@ crates/
     ├── state.rs      lo stato dell'interfaccia (albero, ricerca, dialoghi…)
     ├── prefs.rs      preferenze e applicazione dello stile di egui
     ├── highlight.rs  tokenizzazione syntect + cache delle "galley"
+    ├── terminal.rs   terminale integrato: PTY, emulazione VT100, autoscomparsa
     ├── lsp/          client LSP: JSON-RPC su stdio, diagnostica, definizioni, formattazione
     └── ui/           un modulo per ogni zona dello schermo
         ├── menu.rs   barra dei menu
@@ -162,6 +172,7 @@ crates/
         ├── tree.rs   albero del progetto
         ├── editor.rs numeri di riga, `M` dei metodi, testo, barra trova/sostituisci
         ├── search.rs pannello "cerca nel progetto"
+        ├── terminal.rs pannello del terminale (schermo a celle, tasti, autoscomparsa)
         ├── status.rs barra di stato
         └── dialogs.rs finestre sovrapposte
 ```
@@ -199,6 +210,16 @@ crates/
   server girano su thread dedicati e comunicano con canali `mpsc`; il frame
   successivo raccoglie i risultati pronti. I thread del server risvegliano la
   GUI con `Context::request_repaint`.
+- **Terminale su un PTY vero, disegnato a celle.** Il processo parla con un
+  pseudoterminale (`portable-pty`) e le sue sequenze ANSI vengono interpretate da
+  `vt100`; il pannello raggruppa le celle consecutive con lo stesso stile in
+  poche chiamate di disegno, invece di costruire una galley per ogni carattere.
+  Come per la console di build, l'output arriva da un thread che risveglia la
+  GUI. Mentre il terminale ha il fuoco l'editor **non consuma** le scorciatoie
+  (a parte Ctrl+`): `Ctrl+C`, `Ctrl+W` e simili appartengono alla shell.
+  L'autoscomparsa è una scadenza (1,2 s) dopo la perdita del fuoco, con
+  esclusione del puntatore sopra il pannello; un repaint programmato la fa
+  scattare anche senza altri eventi.
 - **Build interrompibile senza `libc`.** Maven e Gradle vengono lanciati con
   `stdout` e `stderr` su pipe letti da due thread (un solo lettore si
   bloccherebbe sul primo flusso); l'attesa è un `try_wait` in polling che
@@ -252,6 +273,7 @@ per generare questa parte.
 | `Ctrl+Shift+I`     | Formatta il documento            |
 | `F12`              | Vai alla definizione (LSP)       |
 | `Ctrl+B`           | Mostra/nascondi il progetto      |
+| Ctrl+`             | Mostra/nascondi il terminale     |
 | `F5`               | Ricarica l'albero                |
 | `Ctrl+ +` / `Ctrl+-` / `Ctrl+0` | Dimensione del testo |
 | `F1`               | Scorciatoie                      |
@@ -261,6 +283,14 @@ per generare questa parte.
 ## Stato e limiti noti
 
 Questo è uno **scheletro funzionante**, non un editor completo. In particolare:
+
+- **Terminale**: uno shell per volta, sempre con la radice del progetto attivo
+  come cartella di partenza (cambiando progetto non si sposta da solo: si
+  riavvia dall'intestazione). La selezione col mouse non c'è: il testo si copia
+  tutto con Ctrl+Shift+C e si incolla con Ctrl+V. Ctrl+C manda l'interruzione
+  alla shell (su Linux e Windows) come in un terminale di sistema, mentre
+  l'autoscomparsa, per quanto prudente, può comunque nascondere l'output di un
+  comando lungo se si sposta il fuoco altrove: Ctrl+` lo riporta indietro.
 
 - **LSP: un server alla volta.** Il client avvia il server del linguaggio del
   documento in primo piano e lo riavvia passando a un linguaggio diverso o a un

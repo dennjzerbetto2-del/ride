@@ -63,6 +63,32 @@ fn info(ui: &mut Ui, app: &RideApp, actions: &mut Vec<Action>) {
         }
     }
 
+    // Terminale integrato: anche da nascosto resta raggiungibile da qui.
+    if app.terminal.open || app.terminal.has_session() {
+        ui.separator();
+        let (text, color) = if app.terminal.open {
+            ("⌨ terminale".to_string(), ui.visuals().weak_text_color())
+        } else if app.terminal.is_running() {
+            (
+                "⌨ terminale (nascosto)".to_string(),
+                Color32::from_rgb(0x8a, 0xb4, 0xe0),
+            )
+        } else {
+            ("⌨ terminale (uscito)".to_string(), ui.visuals().weak_text_color())
+        };
+        let response = ui.add(
+            egui::Label::new(RichText::new(text).monospace().color(color))
+                .sense(egui::Sense::click())
+                .selectable(false),
+        );
+        if response.clicked() {
+            actions.push(Action::ToggleTerminal);
+        }
+        response
+            .on_hover_text("Terminale integrato — clicca per mostrarlo o nasconderlo")
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+    }
+
     let Some(doc) = doc else {
         return;
     };

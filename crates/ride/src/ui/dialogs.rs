@@ -289,8 +289,11 @@ fn about_window(ctx: &Context, app: &mut RideApp) {
         .resizable(false)
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ctx, |ui| {
-            ui.label(RichText::new("Ride").heading());
-            ui.label(format!("versione {}", env!("CARGO_PKG_VERSION")));
+            ui.vertical_centered(|ui| {
+                super::logo::show(ui);
+                ui.add_space(6.0);
+                ui.label(RichText::new(format!("versione {}", env!("CARGO_PKG_VERSION"))).weak());
+            });
             ui.add_space(6.0);
             ui.label("Editor di codice multi-file con gestione di progetti.");
             ui.label("Interfaccia: egui / eframe. Evidenziazione: syntect.");

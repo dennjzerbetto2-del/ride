@@ -35,6 +35,8 @@ pub struct Prefs {
     pub show_hidden: bool,
     /// Rispetta `.gitignore` nell'albero e nella ricerca.
     pub respect_gitignore: bool,
+    /// Il terminale si nasconde da solo quando perde il fuoco.
+    pub terminal_auto_hide: bool,
     /// Impostazioni modificate e non ancora applicate allo stile.
     dirty: bool,
 }
@@ -55,6 +57,7 @@ impl Default for Prefs {
             syntax_theme: None,
             show_hidden: false,
             respect_gitignore: true,
+            terminal_auto_hide: true,
             dirty: true,
         }
     }
@@ -188,6 +191,10 @@ impl Prefs {
             "ride.respect_gitignore",
             self.respect_gitignore.to_string(),
         );
+        storage.set_string(
+            "ride.terminal_auto_hide",
+            self.terminal_auto_hide.to_string(),
+        );
         if let Some(theme) = &self.syntax_theme {
             storage.set_string("ride.syntax_theme", theme.clone());
         } else {
@@ -216,6 +223,7 @@ impl Prefs {
         bool_at("ride.lsp", &mut self.lsp);
         bool_at("ride.show_hidden", &mut self.show_hidden);
         bool_at("ride.respect_gitignore", &mut self.respect_gitignore);
+        bool_at("ride.terminal_auto_hide", &mut self.terminal_auto_hide);
         if let Some(value) = storage.get_string("ride.font_size") {
             if let Ok(size) = value.parse::<f32>() {
                 self.font_size = size.clamp(8.0, 40.0);

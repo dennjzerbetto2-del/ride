@@ -19,6 +19,7 @@ use crate::state::{
     BuildEvent, BuildState, CloseRequest, EditorSnapshot, FindState, Jobs, ProjectSearchState,
     Prompt, PromptAction, Status, TreeState,
 };
+use crate::terminal::TerminalState;
 use crate::ui;
 
 /// Chiave con cui si salva la sessione (progetti e file aperti).
@@ -81,6 +82,8 @@ pub struct RideApp {
     pub maven_plugins: Vec<&'static ride_core::build::MavenPlugin>,
     /// La console dei comandi di build.
     pub build: BuildState,
+    /// Il terminale integrato (agganciato in fondo alla finestra).
+    pub terminal: TerminalState,
     cursor_cache: HashMap<DocumentId, CursorCache>,
     /// Formattazioni in corso (per tenere viva l'interfaccia).
     pub pending_formats: usize,
@@ -114,6 +117,7 @@ impl RideApp {
             toolchains: Vec::new(),
             maven_plugins: Vec::new(),
             build: BuildState::default(),
+            terminal: TerminalState::default(),
             cursor_cache: HashMap::new(),
             pending_formats: 0,
             quit_confirmed: false,
@@ -131,6 +135,8 @@ impl RideApp {
         app.tree.options.show_hidden = app.prefs.show_hidden;
         app.tree.options.respect_gitignore = app.prefs.respect_gitignore;
         app.lsp.set_repaint_context(cc.egui_ctx.clone());
+        app.terminal.set_repaint_context(cc.egui_ctx.clone());
+        app.terminal.auto_hide = app.prefs.terminal_auto_hide;
         app.prefs.apply(&cc.egui_ctx);
         // Senza indicazioni dalla riga di comando si riprende da dove si era:
         // con una cartella o un file chiesti esplicitamente, invece, comanda
@@ -1082,6 +1088,44 @@ impl RideApp {
     }
 
     // ---------------------------------------------------------------------
+    // Terminale integrato
+    // ---------------------------------------------------------------------
+
+    /// Mostra o nasconde il terminale. Al primo avvio parte lo shell nella
+    /// cartella del progetto attivo.
+    fn toggle_terminal(&mut self) {
+        if self.terminal.open {
+            self.hide_terminal();
+            return;
+        }
+        self.terminal.auto_hide = self.prefs.terminal_auto_hide;
+        let root = self.workspace.root().map(Path::to_path_buf);
+        self.terminal.open(root.as_deref());
+        if let Some(error) = self.terminal.error() {
+            self.status.error(error.to_string());
+        }
+    }
+
+    /// Nasconde il pannello lasciando vivo lo shell. Se era il terminale ad
+    /// avere il fuoco, la tastiera torna all'editor.
+    fn hide_terminal(&mut self) {
+        if self.terminal.focused {
+            self.focus_editor = true;
+        }
+        self.terminal.close();
+    }
+
+    /// Riavvia lo shell (utile dopo un comando che ha lasciato il terminale in
+    /// uno stato strano o quando cambia la cartella di lavoro).
+    fn restart_terminal(&mut self) {
+        let root = self.workspace.root().map(Path::to_path_buf);
+        self.terminal.restart(root.as_deref());
+        if let Some(error) = self.terminal.error() {
+            self.status.error(error.to_string());
+        }
+    }
+
+    // ---------------------------------------------------------------------
     // Language server (LSP)
     // ---------------------------------------------------------------------
 
@@ -1610,6 +1654,13 @@ impl RideApp {
             }
             ctx.request_repaint();
         }
+        let terminal_changed = self.terminal.poll();
+        if let Some(message) = self.terminal.take_exit_notice() {
+            self.status.warn(message);
+        }
+        if terminal_changed {
+            ctx.request_repaint();
+        }
     }
 
     fn handle_dropped_files(&mut self, ctx: &Context) {
@@ -1743,6 +1794,20 @@ impl RideApp {
             Action::AskBuildArgs(tool) => self.ask_build_args(tool),
             Action::ShowBuildConsole => self.build.open = true,
             Action::StopBuild => self.stop_build(),
+            Action::ToggleTerminal => self.toggle_terminal(),
+            Action::HideTerminal => self.hide_terminal(),
+            Action::RestartTerminal => self.restart_terminal(),
+            Action::ToggleTerminalAutoHide => {
+                self.prefs.terminal_auto_hide = !self.prefs.terminal_auto_hide;
+                self.terminal.auto_hide = self.prefs.terminal_auto_hide;
+                self.prefs.mark_dirty();
+                let state = if self.prefs.terminal_auto_hide {
+                    "attiva"
+                } else {
+                    "disattivata"
+                };
+                self.status.info(format!("Autoscomparsa del terminale {state}"));
+            }
             Action::ToggleTree => {
                 self.prefs.show_tree = !self.prefs.show_tree;
                 self.prefs.mark_dirty();
@@ -1951,7 +2016,15 @@ impl eframe::App for RideApp {
         //    Con un dialogo aperto la tastiera appartiene al dialogo: passa
         //    solo `Esc`, che lo chiude.
         let dialog_open = self.dialogs.any_open();
-        for action in Action::collect(&ctx) {
+        let terminal_focused = self.terminal.focused;
+        let shortcuts = if terminal_focused {
+            // Il terminale è un programma a sé: non deve perdere Ctrl+C,
+            // Ctrl+W e simili perché l'editor li ha consumati.
+            Action::collect_terminal(&ctx)
+        } else {
+            Action::collect(&ctx)
+        };
+        for action in shortcuts {
             if dialog_open && !matches!(action, Action::Cancel) {
                 continue;
             }
@@ -1974,6 +2047,15 @@ impl eframe::App for RideApp {
         egui::Panel::bottom("ride-status").show(ui, |ui| {
             ui::status::bar(ui, self, now, &mut actions);
         });
+        if self.terminal.open {
+            egui::Panel::bottom("ride-terminal")
+                .resizable(true)
+                .default_size(260.0)
+                .size_range(110.0..=720.0)
+                .show(ui, |ui| {
+                    actions.extend(ui::terminal::panel(ui, self));
+                });
+        }
         if self.prefs.show_tree {
             egui::Panel::left("ride-tree")
                 .resizable(true)
@@ -2024,6 +2106,7 @@ impl eframe::App for RideApp {
             || self.dialogs.quick_open.loading
             || self.pending_formats > 0
             || self.build.running
+            || self.terminal.is_running()
             // Durante l'handshake vogliamo animare lo stato; a regime la GUI
             // viene risvegliata dai thread del client quando arriva qualcosa.
             || self.lsp.status() == LspStatus::Starting
@@ -2047,6 +2130,7 @@ impl eframe::App for RideApp {
 
     fn on_exit(&mut self) {
         self.lsp.shutdown();
+        self.terminal.shutdown();
     }
 }
 
@@ -2077,6 +2161,7 @@ mod tests {
             toolchains: Vec::new(),
             maven_plugins: Vec::new(),
             build: BuildState::default(),
+            terminal: TerminalState::default(),
             cursor_cache: HashMap::new(),
             pending_formats: 0,
             quit_confirmed: false,
@@ -2562,6 +2647,47 @@ mod tests {
             crate::ui::editor::panel(ui, app);
         });
         output.textures_delta.clear();
+    }
+
+    /// Esegue un frame del terminale con gli eventi indicati.
+    fn frame_terminal(ctx: &Context, app: &mut RideApp, events: Vec<egui::Event>) {
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            crate::ui::terminal::panel(ui, app);
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn il_terminale_si_disegna_senza_rompere_nulla() {
+        let ctx = Context::default();
+        let mut app = app_for_test();
+        // Un terminale aperto ma senza processo: l'intestazione e uno schermo
+        // vuoto devono comunque disegnarsi.
+        app.terminal.open = true;
+        frame_terminal(&ctx, &mut app, Vec::new());
+        frame_terminal(&ctx, &mut app, Vec::new());
+
+        // E il pannello si nasconde con l'azione corrispondente.
+        app.dispatch(Action::HideTerminal);
+        assert!(!app.terminal.open);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn il_terminale_avviato_dal_menu_si_disegna() {
+        let ctx = Context::default();
+        let mut app = app_for_test();
+        app.terminal.set_repaint_context(ctx.clone());
+        app.dispatch(Action::ToggleTerminal);
+        assert!(app.terminal.open);
+        assert!(app.terminal.has_session());
+        for _ in 0..3 {
+            frame_terminal(&ctx, &mut app, Vec::new());
+        }
     }
 
     #[test]

@@ -180,6 +180,20 @@ fn view_menu(ui: &mut Ui, app: &RideApp, actions: &mut Vec<Action>) {
             app.prefs.show_search_panel,
             Action::ToggleSearchPanel,
         );
+        toggle(
+            ui,
+            actions,
+            "Terminale (Ctrl+`)",
+            app.terminal.open,
+            Action::ToggleTerminal,
+        );
+        toggle(
+            ui,
+            actions,
+            "Autoscomparsa del terminale",
+            app.terminal.auto_hide,
+            Action::ToggleTerminalAutoHide,
+        );
         ui.separator();
         toggle(
             ui,

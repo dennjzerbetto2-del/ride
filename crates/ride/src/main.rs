@@ -21,6 +21,7 @@ mod highlight;
 mod lsp;
 mod prefs;
 mod state;
+mod terminal;
 mod ui;
 
 use app::RideApp;

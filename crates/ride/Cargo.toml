@@ -22,8 +22,16 @@ ride-core.workspace = true
 egui = "0.37"
 eframe = { version = "0.37", features = ["persistence"] }
 
+# Decodifica del logo incorporato nel binario (finestra "Informazioni su Ride").
+png = "0.18"
+
 # Client LSP: il protocollo JSON-RPC parla JSON, quindi serve un parser/serializzatore.
 serde_json = "1"
+
+# Terminale integrato: un vero PTY (pseudoterminale) su Unix e Windows, con un
+# emulatore VT100 per interpretare i codici di controllo della shell.
+portable-pty = "0.9"
+vt100 = "0.18"
 
 # Evidenziazione della sintassi. `default-features = false` + `regex-fancy`
 # evita la dipendenza da Oniguruma (C): resta tutto Rust compilabile ovunque.

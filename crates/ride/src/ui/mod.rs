@@ -14,6 +14,8 @@
 //! │ albero    │ editor (gutter + testo)          │ cerca │
 //! │ [3]       │ [5]                              │ [4]   │
 //! ├───────────┴──────────────────────────────────┴───────┤
+//! │ terminale (facoltativo, Ctrl+`)                  [7] │
+//! ├──────────────────────────────────────────────────────┤
 //! │ barra di stato                                   [6] │
 //! └──────────────────────────────────────────────────────┘
 //! ```
@@ -22,8 +24,10 @@
 
 pub mod dialogs;
 pub mod editor;
+pub mod logo;
 pub mod menu;
 pub mod search;
 pub mod status;
 pub mod tabs;
+pub mod terminal;
 pub mod tree;

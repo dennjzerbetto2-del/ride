@@ -73,6 +73,16 @@ pub enum Action {
     /// Interrompe il comando di build in corso.
     StopBuild,
 
+    // Terminale
+    /// Mostra o nasconde il terminale integrato.
+    ToggleTerminal,
+    /// Nasconde il terminale lasciando vivo lo shell.
+    HideTerminal,
+    /// Riavvia lo shell del terminale.
+    RestartTerminal,
+    /// Attiva o disattiva l'autoscomparsa del terminale.
+    ToggleTerminalAutoHide,
+
     // Vista
     ToggleTree,
     ToggleSearchPanel,
@@ -163,6 +173,7 @@ pub const SHORTCUTS: &[Shortcut] = &[
     Shortcut { keys: "Ctrl+Shift+I", description: "Formatta il documento" },
     Shortcut { keys: "F12", description: "Vai alla definizione (LSP)" },
     Shortcut { keys: "Ctrl+B", description: "Mostra/nascondi il pannello del progetto" },
+    Shortcut { keys: "Ctrl+`", description: "Mostra/nascondi il terminale" },
     Shortcut { keys: "F5", description: "Ricarica l'albero del progetto" },
     Shortcut { keys: "Ctrl+ +", description: "Ingrandisci il codice" },
     Shortcut { keys: "Ctrl+-", description: "Rimpicciolisci il codice" },
@@ -219,6 +230,7 @@ impl Action {
             check(&mut actions, M::COMMAND, Key::F, Action::Find);
             check(&mut actions, M::COMMAND, Key::H, Action::Replace);
             check(&mut actions, M::COMMAND, Key::B, Action::ToggleTree);
+            check(&mut actions, M::COMMAND, Key::Backtick, Action::ToggleTerminal);
             check(&mut actions, M::COMMAND, Key::Q, Action::Quit);
             check(&mut actions, M::COMMAND, Key::Slash, Action::ToggleComment);
             check(&mut actions, M::COMMAND, Key::CloseBracket, Action::Indent);
@@ -233,6 +245,21 @@ impl Action {
             check(&mut actions, M::NONE, Key::F5, Action::RefreshTree);
             check(&mut actions, M::NONE, Key::F1, Action::ShowShortcuts);
             check(&mut actions, M::NONE, Key::Escape, Action::Cancel);
+        });
+        actions
+    }
+
+    /// Scorciatoie consentite mentre il terminale ha il fuoco.
+    ///
+    /// Solo `Ctrl+` resta un comando dell'editor: **non** si devono consumare
+    /// gli altri tasti (Ctrl+C, Ctrl+W, …) perché appartengono alla shell.
+    pub fn collect_terminal(ctx: &Context) -> Vec<Action> {
+        use Modifiers as M;
+        let mut actions = Vec::new();
+        ctx.input_mut(|input| {
+            if input.consume_shortcut(&shortcut(M::COMMAND, Key::Backtick)) {
+                actions.push(Action::ToggleTerminal);
+            }
         });
         actions
     }
@@ -263,6 +290,23 @@ mod tests {
         Modifiers::COMMAND
     }
 
+    /// Simula un frame con un tasto premuto e raccoglie le azioni consentite
+    /// mentre il terminale ha il fuoco.
+    fn press_in_terminal(modifiers: Modifiers, key: Key) -> Vec<Action> {
+        let ctx = Context::default();
+        ctx.begin_pass(egui::RawInput {
+            events: vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            }],
+            ..Default::default()
+        });
+        Action::collect_terminal(&ctx)
+    }
+
     #[test]
     fn salva_e_salva_con_nome_non_si_confondono() {
         assert_eq!(press(ctrl(), Key::S), vec![Action::Save]);
@@ -284,6 +328,17 @@ mod tests {
     #[test]
     fn un_tasto_senza_scorciatoia_non_produce_azioni() {
         assert!(press(ctrl(), Key::Y).is_empty());
+    }
+
+    #[test]
+    fn con_il_fuoco_al_terminale_solo_ctrl_backtick_resta_un_comando() {
+        assert_eq!(
+            press_in_terminal(ctrl(), Key::Backtick),
+            vec![Action::ToggleTerminal]
+        );
+        // Ctrl+W chiude la tab nell'editor, ma nel terminale è della shell.
+        assert!(press_in_terminal(ctrl(), Key::W).is_empty());
+        assert!(press_in_terminal(ctrl(), Key::C).is_empty());
     }
 
     #[test]
