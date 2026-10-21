@@ -23,6 +23,43 @@ const SCROLLBACK_LINES: usize = 5_000;
 /// Quanto resta visibile il terminale dopo che ha perso il fuoco.
 const AUTO_HIDE_DELAY: Duration = Duration::from_millis(1_200);
 
+/// Riconosce la richiesta di posizione del cursore (`ESC [ 6 n`) nell'output.
+///
+/// Su Windows il ConPTY nasce con `PSEUDOCONSOLE_INHERIT_CURSOR` (lo impone
+/// `portable-pty` 0.9): appena creato chiede al terminale dove sta il cursore e
+/// **sospende l'input** finché non arriva la risposta. Senza risposta lo shell
+/// parte, disegna il prompt, ma la tastiera resta muta per sempre: sembra
+/// bloccato. La risposta è un *Cursor Position Report* (`ESC [ riga ; colonna R`).
+///
+/// La sequenza può arrivare spezzata su due letture, perciò lo stato del
+/// riconoscimento vive fra un blocco e l'altro.
+#[derive(Default)]
+struct CursorRequest {
+    /// Byte di `ESC [ 6` già riconosciuti.
+    matched: u8,
+}
+
+impl CursorRequest {
+    /// Consuma un blocco di output e dice se contiene una richiesta completa.
+    fn feed(&mut self, bytes: &[u8]) -> bool {
+        let mut asked = false;
+        for &byte in bytes {
+            self.matched = match (self.matched, byte) {
+                (0, 0x1b) => 1,
+                (1, b'[') => 2,
+                (2, b'6') => 3,
+                (3, b'n') => {
+                    asked = true;
+                    0
+                }
+                (_, 0x1b) => 1,
+                _ => 0,
+            };
+        }
+        asked
+    }
+}
+
 /// Un evento prodotto dal processo del terminale.
 #[derive(Debug)]
 enum TerminalEvent {
@@ -66,6 +103,8 @@ pub struct TerminalState {
     exit_reported: bool,
     /// Righe di scorrimento all'indietro (`0` = fondo).
     scroll_offset: usize,
+    /// Richiesta di posizione del cursore in arrivo dal processo.
+    cursor_request: CursorRequest,
     /// Dimensioni correnti in celle.
     rows: u16,
     cols: u16,
@@ -97,6 +136,7 @@ impl TerminalState {
             exit: None,
             exit_reported: false,
             scroll_offset: 0,
+            cursor_request: CursorRequest::default(),
             rows: 24,
             cols: 80,
             focus_requested: false,
@@ -176,6 +216,7 @@ impl TerminalState {
         self.exit = None;
         self.exit_reported = false;
         self.scroll_offset = 0;
+        self.cursor_request = CursorRequest::default();
         self.open = true;
         self.focus_requested = true;
         self.start(root);
@@ -252,8 +293,19 @@ impl TerminalState {
         }
 
         let changed = !chunks.is_empty() || exit.is_some() || disconnected;
+        // Se il processo ha chiesto dove sta il cursore va risposto subito: su
+        // Windows il ConPTY non accetta un solo tasto finché aspetta la
+        // risposta (è quello che faceva sembrare cmd «bloccato»).
+        let asked = chunks.iter().any(|bytes| self.cursor_request.feed(bytes));
+        let reply = asked.then(|| {
+            let (row, col) = self.parser.screen().cursor_position();
+            format!("\x1b[{};{}R", row + 1, col + 1)
+        });
         for bytes in chunks {
             self.parser.process(&bytes);
+        }
+        if let Some(reply) = reply {
+            self.write(reply.as_bytes());
         }
         if let Some(message) = exit {
             self.exit = Some(message);
@@ -304,6 +356,12 @@ impl TerminalState {
             return;
         }
         self.scroll_to_bottom();
+        self.write(bytes);
+    }
+
+    /// Scrive nello shell senza toccare lo scorrimento (serve alle risposte di
+    /// protocollo, che non sono digitazione dell'utente).
+    fn write(&mut self, bytes: &[u8]) {
         if let Some(process) = &mut self.process {
             if let Err(e) = process
                 .writer
@@ -619,6 +677,60 @@ mod tests {
         // Disattivata, non nasconde mai.
         terminal.auto_hide = false;
         assert!(!terminal.should_auto_hide(now + AUTO_HIDE_DELAY, false, false));
+    }
+
+    #[test]
+    fn la_richiesta_di_posizione_del_cursore_si_riconosce_anche_spezzata() {
+        let mut request = CursorRequest::default();
+        assert!(request.feed(b"\x1b[6n"));
+        // Spezzata su due letture.
+        let mut request = CursorRequest::default();
+        assert!(!request.feed(b"\x1b["));
+        assert!(request.feed(b"6n"));
+        // Byte che non c'entrano non la fanno scattare.
+        let mut request = CursorRequest::default();
+        assert!(!request.feed(b"ciao [6n"));
+        assert!(!request.feed(b"\x1b[1;1R"));
+        // Un'interruzione a metà sequenza non lascia lo stato appeso.
+        let mut request = CursorRequest::default();
+        assert!(!request.feed(b"\x1b[6"));
+        assert!(!request.feed(b"x"));
+        assert!(request.feed(b"\x1b[6n"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn il_terminale_risponde_alla_richiesta_di_posizione_del_cursore() {
+        // Su Windows è il ConPTY a chiederla (e senza risposta ignora la
+        // tastiera); qui si verifica il giro completo con un processo che fa
+        // la stessa domanda.
+        let mut terminal = TerminalState::default();
+        terminal.resize(10, 40);
+        let (program, args) = (
+            "/bin/sh".to_string(),
+            vec![
+                "-c".to_string(),
+                "printf '\\033[6n'; head -c 6 | tr -d '\\033'".to_string(),
+            ],
+        );
+        let cwd = std::env::temp_dir();
+        terminal.process =
+            Some(spawn(&program, &args, &cwd, 10, 40, None).expect("il processo non è partito"));
+        terminal.cwd = cwd;
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            terminal.poll();
+            if terminal.screen().contents().contains("[1;1R") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            terminal.screen().contents().contains("[1;1R"),
+            "risposta non ricevuta: {:?}",
+            terminal.screen().contents()
+        );
     }
 
     #[cfg(unix)]
