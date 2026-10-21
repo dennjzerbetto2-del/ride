@@ -58,6 +58,9 @@ pub enum Action {
     MoveLinesDown,
     DeleteLines,
     FormatDocument,
+    /// Converte la selezione (o la parola sotto il cursore) nello stile di
+    /// maiuscole/minuscole indicato.
+    ConvertCase(ride_core::editor::Case),
 
     // Build (Maven / Gradle)
     /// Esegue il comando di build `index` dello strumento indicato

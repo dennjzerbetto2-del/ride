@@ -46,7 +46,10 @@ deliberatamente rimandato ed è elencato in fondo.
   **piegatura dei blocchi `{ … }`** cliccando il marcatore `▾`/`▸` nel canale dei
   numeri di riga, **`M` all'inizio di ogni metodo/funzione** (col nome in un
   popup al passaggio del mouse), indentazione automatica dopo `Invio` e `Tab`,
-  commenta/indenta/duplica/sposta/cancella righe.
+  commenta/indenta/duplica/sposta/cancella righe, e il **menu contestuale**
+  (clic destro) con le conversioni di maiuscole/minuscole della selezione — o
+  della parola sotto il cursore: `MAIUSCOLO`, `minuscolo`, `camelCase`,
+  `PascalCase`, `snake_case`, `SCREAMING_SNAKE_CASE`.
 - **Trova e sostituisci** nel file (`Ctrl+F` / `Ctrl+H`) e **ricerca in tutti i
   file del progetto** (`Ctrl+Shift+F`, o dal menu *Visualizza*, su thread
   separato). Per impostazione predefinita la ricerca segue le stesse regole

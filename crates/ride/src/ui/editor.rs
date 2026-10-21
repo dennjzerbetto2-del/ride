@@ -53,6 +53,8 @@ pub struct EditorOutput {
     pub selection: (usize, usize),
     /// L'utente ha davvero modificato il testo (non solo spostato il cursore).
     pub changed: bool,
+    /// Comandi chiesti dal menu contestuale.
+    pub actions: Vec<Action>,
 }
 
 /// Disegna l'area di editing del documento attivo e aggiorna lo stato dell'app.
@@ -129,6 +131,7 @@ pub fn panel(ui: &mut Ui, app: &mut RideApp) -> Vec<Action> {
         app.lsp.did_change(id, &text);
     }
 
+    actions.extend(output.actions);
     actions
 }
 
@@ -469,8 +472,34 @@ pub fn show(
     let response = &output.response.response;
     let changed = response.changed();
 
+    // Menu contestuale: conversioni di maiuscole/minuscole. `TextEdit` di egui
+    // non ne ha uno, quindi è qui che si aggiungono le voci. L'azione viene
+    // applicata a fine frame (vedi `panel`), quando la selezione è nota.
+    let mut actions = Vec::new();
+    output.response.response.context_menu(|ui| {
+        ui.label(RichText::new("Maiuscole/minuscole").weak());
+        for case in ride_core::editor::Case::ALL {
+            if ui
+                .button(case.label())
+                .on_hover_text(format!("nome file → {}", case.example()))
+                .clicked()
+            {
+                actions.push(Action::ConvertCase(case));
+                ui.close();
+            }
+        }
+    });
+
     // Selezione/posizione corrente, in caratteri.
-    let (mut caret, mut selection) = match output.cursor_range {
+    //
+    // `TextEdit` riporta il cursore solo mentre ha il fuoco: quando lo perde
+    // (menu contestuale aperto, un altro pannello attivo) il valore è `None`.
+    // In quel caso vale l'ultimo stato salvato, altrimenti ogni azione senza
+    // fuoco lavorerebbe come se il cursore fosse all'inizio del file.
+    let range = output.cursor_range.or_else(|| {
+        TextEdit::load_state(&ctx, editor_id(id)).and_then(|state| state.cursor.char_range())
+    });
+    let (mut caret, mut selection) = match range {
         Some(range) => {
             let caret = range.primary.index.0;
             let from = range.primary.index.0.min(range.secondary.index.0);
@@ -479,6 +508,34 @@ pub fn show(
         }
         None => (0, (0, 0)),
     };
+
+    // Il clic destro serve al menu contestuale, ma `TextEdit` non ne ha uno e
+    // tratta la pressione come un clic qualsiasi: sposta il cursore (o azzera
+    // la selezione). Qui lo rimettiamo a posto, così la conversione lavora sulla
+    // parola indicata e non sulla prima del file:
+    // * se il clic cade dentro una selezione, la selezione resta (è così che si
+    //   converte un identificatore già selezionato);
+    // * altrimenti il cursore va sotto il puntatore.
+    let button = egui::PointerButton::Secondary;
+    let secondary = ctx.input(|input| {
+        input.pointer.button_pressed(button) || input.pointer.button_released(button)
+    });
+    if secondary && response.hovered() {
+        if let Some(pointer) = ctx.pointer_interact_pos() {
+            let at = output
+                .galley
+                .cursor_from_pos(pointer - output.galley_pos)
+                .index
+                .0;
+            if selection.0 < selection.1 && selection.0 <= at && at <= selection.1 {
+                select(&ctx, id, selection.0, selection.1);
+            } else {
+                caret = at;
+                selection = (at, at);
+                select(&ctx, id, at, at);
+            }
+        }
+    }
 
     // Il cursore non deve restare dentro un blocco piegato: lì il testo non si
     // vede (né si può modificare sensatamente). Lo si riporta all'inizio.
@@ -604,6 +661,7 @@ pub fn show(
         caret,
         selection,
         changed: net_changed,
+        actions,
     }
 }
 

@@ -346,6 +346,173 @@ pub fn word_at(text: &str, char_idx: usize) -> &str {
     &text[from..to]
 }
 
+/// Intervallo di **caratteri** della parola attorno a `char_idx`, cioè quella
+/// che restituisce [`word_at`]. `None` se lì non c'è una parola.
+///
+/// Serve alle operazioni che, senza selezione, lavorano sulla parola sotto il
+/// cursore (le conversioni di maiuscole/minuscole del menu contestuale).
+pub fn word_range(text: &str, char_idx: usize) -> Option<(usize, usize)> {
+    let chars: Vec<char> = text.chars().collect();
+    let idx = char_idx.min(chars.len());
+    let mut start = idx;
+    while start > 0 && is_word_char(chars[start - 1]) {
+        start -= 1;
+    }
+    let mut end = idx;
+    while end < chars.len() && is_word_char(chars[end]) {
+        end += 1;
+    }
+    (start < end).then_some((start, end))
+}
+
+/// Le conversioni di maiuscole/minuscole del menu contestuale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Case {
+    /// `UPPERCASE`
+    Upper,
+    /// `lowercase`
+    Lower,
+    /// `camelCase`
+    Camel,
+    /// `PascalCase`
+    Pascal,
+    /// `snake_case`
+    Snake,
+    /// `SCREAMING_SNAKE_CASE`
+    Screaming,
+}
+
+impl Case {
+    /// Tutte le voci, nell'ordine in cui compaiono nel menu.
+    pub const ALL: [Case; 6] = [
+        Case::Upper,
+        Case::Lower,
+        Case::Camel,
+        Case::Pascal,
+        Case::Snake,
+        Case::Screaming,
+    ];
+
+    /// Etichetta della voce di menu.
+    pub fn label(self) -> &'static str {
+        match self {
+            Case::Upper => "MAIUSCOLO",
+            Case::Lower => "minuscolo",
+            Case::Camel => "camelCase",
+            Case::Pascal => "PascalCase",
+            Case::Snake => "snake_case",
+            Case::Screaming => "SCREAMING_SNAKE_CASE",
+        }
+    }
+
+    /// Un esempio del risultato, per il suggerimento al passaggio del mouse.
+    pub fn example(self) -> &'static str {
+        match self {
+            Case::Upper => "NOME FILE",
+            Case::Lower => "nome file",
+            Case::Camel => "nomeFile",
+            Case::Pascal => "NomeFile",
+            Case::Snake => "nome_file",
+            Case::Screaming => "NOME_FILE",
+        }
+    }
+}
+
+/// Converte `text` nello stile indicato.
+///
+/// `MAIUSCOLO` e `minuscolo` non toccano i separatori (le parole restano
+/// separate da `_` o spazi); gli altri stili **normalizzano** i separatori:
+/// [`words`] spezza l'identificatore e lo ricompone nel formato richiesto.
+pub fn convert_case(text: &str, case: Case) -> String {
+    match case {
+        Case::Upper => text.to_uppercase(),
+        Case::Lower => text.to_lowercase(),
+        Case::Camel | Case::Pascal | Case::Snake | Case::Screaming => {
+            let words = words(text);
+            if words.is_empty() {
+                return String::new();
+            }
+            match case {
+                Case::Camel => words
+                    .iter()
+                    .enumerate()
+                    .map(|(index, word)| {
+                        if index == 0 {
+                            word.to_lowercase()
+                        } else {
+                            capitalize(word)
+                        }
+                    })
+                    .collect(),
+                Case::Pascal => words.iter().map(|word| capitalize(word)).collect(),
+                Case::Snake => words
+                    .iter()
+                    .map(|word| word.to_lowercase())
+                    .collect::<Vec<_>>()
+                    .join("_"),
+                _ => words
+                    .iter()
+                    .map(|word| word.to_uppercase())
+                    .collect::<Vec<_>>()
+                    .join("_"),
+            }
+        }
+    }
+}
+
+/// Le parole di un identificatore, in minuscolo.
+///
+/// Spezza su tutto ciò che non è lettera o cifra (`_`, `-`, spazi, punteggiatura)
+/// e sui cambi di maiuscola: `fooBar` → `foo`, `Bar`; `HTTPServer` →
+/// `HTTP`, `Server`; `nome_file` → `nome`, `file`. Le cifre restano attaccate
+/// alla parola che le precede (`base64` resta una parola sola), ma ne aprono
+/// una nuova se seguite da una maiuscola (`utf8Encode` → `utf8`, `Encode`).
+pub fn words(text: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut words: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut previous: Option<char> = None;
+
+    for (index, &c) in chars.iter().enumerate() {
+        if !c.is_alphanumeric() {
+            if !current.is_empty() {
+                words.push(std::mem::take(&mut current));
+            }
+            previous = None;
+            continue;
+        }
+        let next = chars.get(index + 1).copied();
+        // `fooBar`: la maiuscola dopo una minuscola (o una cifra) apre una
+        // parola nuova.
+        let after_lower = previous.is_some_and(|p| p.is_lowercase() || p.is_numeric());
+        // `HTTPServer`: l'ultima maiuscola di un acronimo è l'inizio della
+        // parola successiva.
+        let acronym_end = matches!(
+            (previous, next),
+            (Some(p), Some(n)) if p.is_uppercase() && c.is_uppercase() && n.is_lowercase()
+        );
+        let boundary = (after_lower && c.is_uppercase()) || acronym_end;
+        if boundary && !current.is_empty() {
+            words.push(std::mem::take(&mut current));
+        }
+        current.push(c);
+        previous = Some(c);
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
+}
+
+/// La parola con la prima lettera maiuscola e il resto minuscolo.
+fn capitalize(word: &str) -> String {
+    let mut chars = word.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+        None => String::new(),
+    }
+}
+
 const BRACKETS: [(char, char); 3] = [('(', ')'), ('[', ']'), ('{', '}')];
 
 /// Offset in byte della parentesi corrispondente a quella sotto (o subito prima
@@ -638,6 +805,59 @@ mod tests {
         assert_eq!(word_at("dopo_il_punto.", 13), "dopo_il_punto");
         // Senza nessuna parola attorno: vuoto.
         assert_eq!(word_at(" ()", 1), "");
+    }
+
+    #[test]
+    fn le_parole_di_un_identificatore() {
+        assert_eq!(words("foo_bar"), ["foo", "bar"]);
+        assert_eq!(words("fooBar"), ["foo", "Bar"]);
+        assert_eq!(words("HTTPServer"), ["HTTP", "Server"]);
+        assert_eq!(words("nome-file.testo"), ["nome", "file", "testo"]);
+        assert_eq!(words("base64"), ["base64"]);
+        assert_eq!(words("utf8Encode"), ["utf8", "Encode"]);
+        // Una sola parola già in maiuscolo resta intera.
+        assert_eq!(words("HTTP"), ["HTTP"]);
+        assert!(words("___").is_empty());
+    }
+
+    #[test]
+    fn conversioni_di_maiuscole_e_minuscole() {
+        let text = "nome_file";
+        assert_eq!(convert_case(text, Case::Upper), "NOME_FILE");
+        assert_eq!(convert_case(text, Case::Lower), "nome_file");
+        assert_eq!(convert_case(text, Case::Camel), "nomeFile");
+        assert_eq!(convert_case(text, Case::Pascal), "NomeFile");
+        assert_eq!(convert_case(text, Case::Snake), "nome_file");
+        assert_eq!(convert_case(text, Case::Screaming), "NOME_FILE");
+
+        // Dai formati "strani" si torna comunque a quelli richiesti.
+        assert_eq!(convert_case("HTTP server", Case::Camel), "httpServer");
+        assert_eq!(convert_case("nomeFile", Case::Snake), "nome_file");
+        assert_eq!(convert_case("NomeFile", Case::Snake), "nome_file");
+        assert_eq!(convert_case("nome file", Case::Pascal), "NomeFile");
+        assert_eq!(convert_case("nome file", Case::Screaming), "NOME_FILE");
+        // MAIUSCOLO/minuscolo non toccano i separatori.
+        assert_eq!(convert_case("nome file", Case::Upper), "NOME FILE");
+        assert_eq!(convert_case("NOME FILE", Case::Lower), "nome file");
+        // Testo senza lettere o con caratteri non ASCII.
+        assert_eq!(convert_case("", Case::Camel), "");
+        assert_eq!(convert_case("___", Case::Snake), "");
+        assert_eq!(convert_case("perché", Case::Upper), "PERCHÉ");
+        assert_eq!(convert_case("PERCHÉ", Case::Camel), "perché");
+    }
+
+    #[test]
+    fn intervallo_della_parola_sotto_il_cursore() {
+        let text = "let valore = 1;";
+        assert_eq!(word_range(text, 6), Some((4, 10)));
+        // Sullo spazio si prende la parola a sinistra, come `word_at`.
+        assert_eq!(word_range(text, 3), Some((0, 3)));
+        assert_eq!(word_range(text, 0), Some((0, 3)));
+        // Nessuna parola: niente intervallo.
+        assert_eq!(word_range(" ()", 1), None);
+        assert_eq!(word_range("", 0), None);
+        // Con caratteri non ASCII gli indici restano di carattere.
+        assert_eq!(word_range("è_perché ok", 4), Some((0, 8)));
     }
 
     #[test]

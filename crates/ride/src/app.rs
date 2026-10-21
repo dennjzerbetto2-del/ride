@@ -926,6 +926,58 @@ impl RideApp {
         self.notify_lsp(id);
     }
 
+    // ---------------------------------------------------------------------
+    // Maiuscole/minuscole
+    // ---------------------------------------------------------------------
+
+    /// Converte la selezione nello stile richiesto dal menu contestuale.
+    ///
+    /// Senza selezione si lavora sulla parola sotto il cursore, come fanno gli
+    /// editor quando si fa clic destro su un identificatore.
+    fn convert_case(&mut self, case: ride_core::editor::Case) {
+        let Some(id) = self.workspace.active_id() else {
+            return;
+        };
+        let snapshot = self.editor.filter(|s| s.doc == id);
+        let Some(doc) = self.workspace.get_mut(id) else {
+            return;
+        };
+
+        let text = doc.text();
+        let (from, to) = snapshot.map(|s| s.selection).unwrap_or((0, 0));
+        let (from, to) = if from == to {
+            match editor::word_range(text, from) {
+                Some(range) => range,
+                None => {
+                    self.status.warn("Nessuna parola da convertire");
+                    return;
+                }
+            }
+        } else {
+            (from, to)
+        };
+
+        let bytes = (
+            editor::byte_of_char(text, from),
+            editor::byte_of_char(text, to),
+        );
+        let selected = &text[bytes.0..bytes.1];
+        let converted = editor::convert_case(selected, case);
+        if converted == selected {
+            self.status.info(format!("Già in {}", case.label()));
+            return;
+        }
+        doc.buffer_mut().replace_range(bytes.0..bytes.1, &converted);
+        doc.mark_edited();
+
+        // La selezione resta sul testo convertito, così si può provare un'altra
+        // voce senza riselezionare.
+        let to = from + converted.chars().count();
+        self.pending_selection = Some((from, to));
+        self.focus_editor = true;
+        self.notify_lsp(id);
+    }
+
     /// Formatta il documento attivo.
     ///
     /// Prima scelta: il formatter esterno del linguaggio (`rustfmt`, `black`…),
@@ -1789,6 +1841,7 @@ impl RideApp {
             Action::MoveLinesDown => self.line_op(LineOp::MoveDown),
             Action::DeleteLines => self.line_op(LineOp::Delete),
             Action::FormatDocument => self.format_active(),
+            Action::ConvertCase(case) => self.convert_case(case),
             Action::RunBuild(tool, index) => self.run_build(tool, index),
             Action::RunBuildArgs(tool, args) => self.run_build_args(tool, &args),
             Action::AskBuildArgs(tool) => self.ask_build_args(tool),
@@ -2930,6 +2983,213 @@ mod tests {
 
         // Il cursore (l'estremo mobile) è stato riportato fuori dal blocco.
         assert_eq!(app.editor.as_ref().unwrap().selection, (12, 12));
+    }
+
+    /// La conversione del menu contestuale lavora sulla selezione e la lascia
+    /// selezionata sul risultato, così si può provare un'altra voce.
+    #[test]
+    fn conversione_di_case_sulla_selezione() {
+        let mut app = app_for_test();
+        let id = app.workspace.new_document();
+        if let Some(doc) = app.workspace.get_mut(id) {
+            doc.set_text("nome_file = 1;");
+        }
+        app.editor = Some(EditorSnapshot {
+            doc: id,
+            selection: (0, 9),
+            line: 0,
+            column: 0,
+        });
+
+        app.dispatch(Action::ConvertCase(ride_core::editor::Case::Camel));
+        assert_eq!(app.workspace.get(id).unwrap().text(), "nomeFile = 1;");
+        assert_eq!(app.pending_selection, Some((0, 8)));
+        assert!(app.focus_editor);
+        assert!(app.workspace.get(id).unwrap().is_dirty());
+
+        // Con la selezione sul risultato si può concatenare un'altra forma.
+        app.editor = Some(EditorSnapshot {
+            doc: id,
+            selection: (0, 8),
+            line: 0,
+            column: 0,
+        });
+        app.dispatch(Action::ConvertCase(ride_core::editor::Case::Screaming));
+        assert_eq!(app.workspace.get(id).unwrap().text(), "NOME_FILE = 1;");
+    }
+
+    /// Senza selezione si converte la parola sotto il cursore.
+    #[test]
+    fn conversione_di_case_sulla_parola_sotto_il_cursore() {
+        let mut app = app_for_test();
+        let id = app.workspace.new_document();
+        if let Some(doc) = app.workspace.get_mut(id) {
+            doc.set_text("let NomeFile = 1;");
+        }
+        // Cursore in mezzo a `NomeFile` (carattere 7).
+        app.editor = Some(EditorSnapshot {
+            doc: id,
+            selection: (7, 7),
+            line: 0,
+            column: 0,
+        });
+
+        app.dispatch(Action::ConvertCase(ride_core::editor::Case::Snake));
+        assert_eq!(app.workspace.get(id).unwrap().text(), "let nome_file = 1;");
+        assert_eq!(app.pending_selection, Some((4, 13)));
+
+        // Sullo spazio si prende la parola a sinistra, come `word_at`.
+        app.editor = Some(EditorSnapshot {
+            doc: id,
+            selection: (3, 3),
+            line: 0,
+            column: 0,
+        });
+        app.dispatch(Action::ConvertCase(ride_core::editor::Case::Upper));
+        assert_eq!(app.workspace.get(id).unwrap().text(), "LET nome_file = 1;");
+
+        // Senza nessuna parola attorno non succede nulla.
+        if let Some(doc) = app.workspace.get_mut(id) {
+            doc.set_text("()");
+        }
+        app.editor = Some(EditorSnapshot {
+            doc: id,
+            selection: (0, 0),
+            line: 0,
+            column: 0,
+        });
+        app.dispatch(Action::ConvertCase(ride_core::editor::Case::Upper));
+        assert_eq!(app.workspace.get(id).unwrap().text(), "()");
+    }
+
+    /// Il clic destro sull'editor apre il menu contestuale con le conversioni
+    /// di maiuscole/minuscole.
+    #[test]
+    fn il_clic_destro_sull_editor_apre_il_menu_delle_conversioni() {
+        let ctx = Context::default();
+        let mut app = app_for_test();
+        let id = app.workspace.new_document();
+        if let Some(doc) = app.workspace.get_mut(id) {
+            doc.set_text("nome_file = 1;");
+        }
+        app.focus_editor = true;
+        frame_editor(&ctx, &mut app, vec![]);
+
+        right_click(&ctx, &mut app, egui::pos2(100.0, 8.0));
+
+        // Il menu viene disegnato nel frame successivo all'apertura.
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::ui::editor::panel(ui, &mut app);
+        });
+        output.textures_delta.clear();
+
+        let painted = painted_text(&output.shapes);
+        for case in ride_core::editor::Case::ALL {
+            assert!(
+                painted.contains(case.label()),
+                "voce «{}» assente dal menu: {painted:?}",
+                case.label()
+            );
+        }
+    }
+
+    /// Il clic destro porta il cursore sotto il puntatore: senza selezione la
+    /// conversione deve lavorare sulla parola indicata, non sulla prima del file.
+    #[test]
+    fn il_clic_destro_porta_il_cursore_sotto_il_puntatore() {
+        let ctx = Context::default();
+        let mut app = app_for_test();
+        let id = app.workspace.new_document();
+        let text = "uno due tre quattro cinque sei sette otto nove dieci";
+        if let Some(doc) = app.workspace.get_mut(id) {
+            doc.set_text(text);
+        }
+        app.focus_editor = true;
+        frame_editor(&ctx, &mut app, vec![]);
+
+        // Clic destro a metà riga, molto oltre la prima parola.
+        right_click(&ctx, &mut app, egui::pos2(300.0, 8.0));
+
+        let selection = app.editor.unwrap().selection;
+        assert_eq!(selection.0, selection.1, "senza selezione è un punto solo");
+        assert!(selection.0 > 0, "cursore rimasto all'inizio: {selection:?}");
+
+        app.dispatch(Action::ConvertCase(ride_core::editor::Case::Upper));
+        let converted = app.workspace.get(id).unwrap().text().to_string();
+        assert!(
+            converted.starts_with("uno "),
+            "toccata la prima parola: {converted}"
+        );
+        assert!(
+            converted.chars().any(char::is_uppercase),
+            "niente convertito: {converted}"
+        );
+    }
+
+    /// Clic destro *dentro* una selezione: la selezione resta (è così che si
+    /// converte un identificatore già selezionato).
+    #[test]
+    fn il_clic_destro_dentro_la_selezione_la_conserva() {
+        let ctx = Context::default();
+        let mut app = app_for_test();
+        let id = app.workspace.new_document();
+        if let Some(doc) = app.workspace.get_mut(id) {
+            doc.set_text("nome_file = 1;");
+        }
+        app.focus_editor = true;
+        frame_editor(&ctx, &mut app, vec![]);
+        app.pending_selection = Some((0, 9));
+        frame_editor(&ctx, &mut app, vec![]);
+
+        assert_eq!(app.editor.unwrap().selection, (0, 9), "prima del clic");
+        right_click(&ctx, &mut app, egui::pos2(70.0, 8.0));
+        assert_eq!(app.editor.unwrap().selection, (0, 9));
+    }
+
+    /// Clic destro (pressione e rilascio, che è ciò che fa scattare il clic).
+    fn right_click(ctx: &Context, app: &mut RideApp, pos: egui::Pos2) {
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for events in [
+            vec![egui::Event::PointerMoved(pos), button(true)],
+            vec![button(false)],
+        ] {
+            let input = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                crate::ui::editor::panel(ui, app);
+            });
+            output.textures_delta.clear();
+        }
+    }
+
+    /// Tutto il testo dipinto nei shape di un frame (serve ai test del menu).
+    fn painted_text(shapes: &[egui::epaint::ClippedShape]) -> String {
+        fn walk(shape: &egui::Shape, out: &mut String) {
+            match shape {
+                egui::Shape::Text(text) => {
+                    out.push_str(text.galley.text());
+                    out.push('\n');
+                }
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        walk(shape, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = String::new();
+        for clipped in shapes {
+            walk(&clipped.shape, &mut out);
+        }
+        out
     }
 
     /// Cartella temporanea per i test che aprono un progetto.
